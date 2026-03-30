@@ -1,0 +1,39 @@
+name: mobility
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - ffmpeg                    # video decoding
+  - cudatoolkit=11.8          # remove if CPU-only
+  - cudnn=8.6                 # remove if CPU-only
+  - pip:
+    # ── Pose estimation ─────────────────────────────────────────────────────
+    - "deeplabcut[pytorch]>=3.0.0"   # use [tf] for TensorFlow / DLC 2.x
+    - dlclibrary>=0.5.0
+
+    # ── Behavioral segmentation ─────────────────────────────────────────────
+    - keypoint-moseq>=0.4.0
+    - jax[cuda11_pip]>=0.4.1         # swap [cpu] for CPU-only machines
+    - jaxlib>=0.4.1
+
+    # ── Scientific stack ────────────────────────────────────────────────────
+    - numpy>=1.23
+    - scipy>=1.10
+    - pandas>=2.0
+    - scikit-learn>=1.3
+    - h5py>=3.8
+    - matplotlib>=3.7
+    - seaborn>=0.13
+    - tqdm>=4.65
+
+    # ── Video I/O ───────────────────────────────────────────────────────────
+    - opencv-python-headless>=4.8
+    - vidio>=0.1.4
+
+    # ── Utilities ───────────────────────────────────────────────────────────
+    - pyyaml>=6.0
+    - click>=8.1
+    - rich>=13.0
+    - joblib>=1.3

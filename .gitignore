@@ -1,0 +1,55 @@
+# ── Research data & experimental outputs ──────────────────────────────────────
+Data/
+outputs/
+Annotation/
+
+# ── Model weights (large binary files – download via dlclibrary) ──────────────
+superanimal_topviewmouse_model/
+*.pt
+*.pth
+
+# ── Pipeline output formats ───────────────────────────────────────────────────
+*.h5
+*.npz
+*.hdf5
+
+# ── Video files ───────────────────────────────────────────────────────────────
+*.mp4
+*.MP4
+*.mpg
+*.MPG
+*.avi
+*.AVI
+*.mov
+
+# ── Other data / archive formats ─────────────────────────────────────────────
+*.zip
+*.tar.gz
+*.docx
+*.xls
+*.xlsx
+*.pvfs
+
+# ── Jupyter notebooks ─────────────────────────────────────────────────────────
+*.ipynb
+
+# ── Python cache ──────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── Temp dirs created by the pipeline ─────────────────────────────────────────
+_tmp_ds/
+
+# ── Claude Code project memory ────────────────────────────────────────────────
+.claude/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/

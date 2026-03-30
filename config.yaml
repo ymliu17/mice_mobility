@@ -1,0 +1,123 @@
+# =============================================================================
+# Mobility Pipeline – Master Configuration
+# =============================================================================
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+paths:
+  video_dir: "Data"                          # root folder containing context sub-dirs
+  output_dir: "outputs"
+  dlc_output_dir: "outputs/01_dlc_raw"       # DLC H5 / CSV files land here
+  preprocessed_dir: "outputs/02_preprocessed" # cleaned keypoint arrays (NPZ)
+  moseq_project_dir: "outputs/03_moseq"      # keypoint-moseq project root
+  analysis_dir: "outputs/04_analysis"        # CSVs, figures, JSON summaries
+
+# ─── Video contexts ──────────────────────────────────────────────────────────
+# Add one entry per experimental context.  `folder` is relative to the repo root.
+contexts:
+  - name: open_field
+    folder: "Data/David_Pain"
+    video_extensions: [".mpg", ".mp4", ".avi"]
+  - name: epm
+    folder: "Data/EPM videos"
+    video_extensions: [".mp4", ".MP4", ".avi"]
+
+# ─── DeepLabCut SuperAnimal ──────────────────────────────────────────────────
+dlc:
+  superanimal_name: "superanimal_topviewmouse"   # model zoo name
+  # PyTorch (DLC >= 3.0) model; set to "dlcrnet" to fall back to TensorFlow
+  model_name: "hrnetw32"
+  detector_name: "fasterrcnn_mobilenet_v3_large_fpn"
+  # Scale list used by SuperAnimal video adaptation (pixels); covers typical arena sizes
+  scale_list: [200, 300, 400]
+  # Video adaptation refines the model on unlabelled frames.
+  # Disable for a quick first pass; enable for publication-quality results.
+  video_adapt: false
+  adapt_iterations: 100
+  batch_size: 8
+  save_as_csv: true          # also write a human-readable CSV alongside the H5
+  target_fps: null           # downsample to this fps before DLC (null = all frames; 10–15 recommended)
+
+# ─── Keypoints ────────────────────────────────────────────────────────────────
+keypoints:
+  # Full 27-point skeleton from SuperAnimal TopViewMouse
+  all_bodyparts:
+    - nose
+    - left_ear
+    - right_ear
+    - left_ear_tip
+    - right_ear_tip
+    - left_eye
+    - right_eye
+    - neck
+    - mid_back
+    - mouse_center
+    - mid_backend
+    - mid_backend2
+    - mid_backend3
+    - tail_base
+    - tail1
+    - tail2
+    - tail3
+    - tail4
+    - tail5
+    - left_shoulder
+    - left_midside
+    - left_hip
+    - right_shoulder
+    - right_midside
+    - right_hip
+    - tail_end
+    - head_midpoint
+  # Subset fed into MoSeq (tail tip excluded; too noisy for syllable detection)
+  use_bodyparts:
+    - nose
+    - left_ear
+    - right_ear
+    - neck
+    - mid_back
+    - mouse_center
+    - tail_base
+    - left_shoulder
+    - left_midside
+    - left_hip
+    - right_shoulder
+    - right_midside
+    - right_hip
+  # For egocentric alignment reference (MoSeq handles alignment internally)
+  anchor_part: "mouse_center"
+  heading_parts: ["nose", "tail_base"]
+  # Used to compute body length for normalization
+  body_length_parts: ["nose", "tail_base"]
+
+# ─── Preprocessing ────────────────────────────────────────────────────────────
+preprocessing:
+  conf_threshold: 0.6          # mask keypoints with confidence below this value
+  max_interp_gap: 10           # max consecutive NaN frames to interpolate (null = unlimited)
+  smooth_window: 5             # Savitzky-Golay window length (must be odd; 0 = disabled)
+  smooth_polyorder: 2
+  normalize_body_length: true  # divide all coords by per-session mean body length
+  # If true, z-score each keypoint dimension within a session (applied after norm)
+  session_standardize: false
+
+# ─── keypoint-MoSeq ──────────────────────────────────────────────────────────
+moseq:
+  model_name: "model_v01"
+  pca_components: 10           # number of PCs to retain (check scree plot first)
+  # AR-only warm-up: fast, no full SLDS; refine the state sequence
+  num_ar_iters: 50
+  # Full SLDS fitting iterations
+  num_full_iters: 200
+  # HDP prior: max syllable states (pruning reduces the effective number)
+  num_states: 100
+  kappa: 1.0e6                 # HDP stickiness (higher → longer dwell times)
+  nlags: 3                     # AR model lags
+  save_every: 25               # checkpoint interval
+
+# ─── Analysis ─────────────────────────────────────────────────────────────────
+analysis:
+  # Syllables with usage below this fraction of total frames are treated as rare
+  min_usage_fraction: 0.005
+  # Rolling window (frames) for local sequence entropy
+  entropy_window: 50
+  # Number of top syllables shown in transition matrix heatmaps
+  top_n_syllables: 20
