@@ -50,6 +50,7 @@ def run_superanimal_inference_pytorch(
     video_adapt: bool = False,
     adapt_iterations: int = 100,
     batch_size: int = 8,
+    detector_batch_size: int = 8,
     save_as_csv: bool = True,
 ) -> None:
     """
@@ -59,7 +60,11 @@ def run_superanimal_inference_pytorch(
       <dest_folder>/<video_stem>DLC_<scorer>.h5
       <dest_folder>/<video_stem>DLC_<scorer>.csv   (if save_as_csv=True)
     """
+    import torch
     import deeplabcut
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    logger.info("DLC inference device: %s", device)
 
     os.makedirs(dest_folder, exist_ok=True)
 
@@ -80,6 +85,8 @@ def run_superanimal_inference_pytorch(
             video_adapt=True,
             adapt_iterations=adapt_iterations,
             batch_size=batch_size,
+            detector_batch_size=detector_batch_size,
+            device=device,
             create_labeled_video=False,
         )
     else:
@@ -92,6 +99,8 @@ def run_superanimal_inference_pytorch(
             videotype=_infer_videotype(videos),
             dest_folder=dest_folder,
             batch_size=batch_size,
+            detector_batch_size=detector_batch_size,
+            device=device,
             create_labeled_video=False,
         )
 
@@ -144,15 +153,32 @@ def get_video_fps(video_path: str) -> float:
 
 
 def downsample_video(src: str, dst: str, target_fps: float) -> None:
-    """Create a copy of *src* resampled to *target_fps* using ffmpeg."""
-    cmd = [
+    """Create a copy of *src* resampled to *target_fps* using ffmpeg.
+
+    Tries GPU encoding (h264_nvenc) first for speed; falls back to CPU
+    libx264 ultrafast if nvenc is unavailable.
+    """
+    def _run(cmd):
+        return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+    gpu_cmd = [
         "ffmpeg", "-y", "-i", src,
         "-vf", f"fps={target_fps}",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-        "-an",   # drop audio – not needed for pose tracking
+        "-c:v", "h264_nvenc", "-preset", "fast",
+        "-an",
         dst,
     ]
-    result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    result = _run(gpu_cmd)
+    if result.returncode != 0:
+        logger.warning("h264_nvenc unavailable, falling back to libx264 ultrafast.")
+        cpu_cmd = [
+            "ffmpeg", "-y", "-i", src,
+            "-vf", f"fps={target_fps}",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+            "-an",
+            dst,
+        ]
+        result = _run(cpu_cmd)
     if result.returncode != 0:
         raise RuntimeError(
             f"ffmpeg failed for {src}:\n{result.stderr.decode(errors='replace')}"
@@ -179,10 +205,13 @@ def _prepare_videos(
         actual_fps = get_video_fps(v)
         if actual_fps > target_fps * 1.05:   # 5 % tolerance avoids rounding noise
             dst = os.path.join(tmp_dir, Path(v).name)
-            logger.info(
-                "  Resampling %s: %.1f → %.1f fps ...", Path(v).name, actual_fps, target_fps
-            )
-            downsample_video(v, dst, target_fps)
+            if os.path.exists(dst):
+                logger.info("  %s already downsampled – reusing.", Path(v).name)
+            else:
+                logger.info(
+                    "  Resampling %s: %.1f → %.1f fps ...", Path(v).name, actual_fps, target_fps
+                )
+                downsample_video(v, dst, target_fps)
             out_paths.append(dst)
             fps_manifest[stem] = target_fps
         else:
@@ -223,6 +252,21 @@ def process_context(
     dest_folder = os.path.join(output_root, context_name)
     os.makedirs(dest_folder, exist_ok=True)
 
+    # ── Skip if all videos already have H5 output ─────────────────────────────
+    existing_h5 = list(Path(dest_folder).glob("*.h5"))
+    if len(existing_h5) >= len(videos):
+        logger.info(
+            "Context '%s': %d H5 files already exist for %d videos – skipping DLC.",
+            context_name, len(existing_h5), len(videos),
+        )
+        # Still write fps manifest if missing
+        manifest_path = os.path.join(dest_folder, "fps_manifest.json")
+        if not os.path.exists(manifest_path):
+            fps_manifest = {Path(v).stem: get_video_fps(v) for v in videos}
+            with open(manifest_path, "w") as fh:
+                json.dump(fps_manifest, fh, indent=2)
+        return len(existing_h5)
+
     logger.info(
         "Context '%s': %d video(s) → %s", context_name, len(videos), dest_folder
     )
@@ -234,53 +278,75 @@ def process_context(
     fps_manifest: Dict[str, float] = {}
     tmp_dir: Optional[str] = None
 
-    if target_fps is not None:
-        tmp_dir = os.path.join(dest_folder, "_tmp_ds")
+    # ── DLC inference – one video at a time to limit disk usage ──────────────
+    major, minor = _get_dlc_version()
+    tmp_dir = os.path.join(dest_folder, "_tmp_ds") if target_fps is not None else None
+    if tmp_dir:
         os.makedirs(tmp_dir, exist_ok=True)
-        try:
-            videos_to_run, fps_manifest = _prepare_videos(videos, target_fps, tmp_dir)
-        except Exception as exc:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            tmp_dir = None
-            logger.error(
-                "Downsampling failed (%s) – running DLC on original frames.", exc
-            )
-            videos_to_run = videos
-            fps_manifest = {Path(v).stem: get_video_fps(v) for v in videos}
-    else:
-        fps_manifest = {Path(v).stem: get_video_fps(v) for v in videos}
 
-    # ── DLC inference ─────────────────────────────────────────────────────────
-    try:
-        major, minor = _get_dlc_version()
-        if major >= 3:
-            run_superanimal_inference_pytorch(
-                videos=videos_to_run,
-                superanimal_name=dlc_cfg["superanimal_name"],
-                model_name=dlc_cfg["model_name"],
-                detector_name=dlc_cfg["detector_name"],
-                scale_list=dlc_cfg.get("scale_list", [200, 300, 400]),
-                dest_folder=dest_folder,
-                video_adapt=dlc_cfg.get("video_adapt", False),
-                adapt_iterations=dlc_cfg.get("adapt_iterations", 100),
-                batch_size=dlc_cfg.get("batch_size", 8),
-                save_as_csv=dlc_cfg.get("save_as_csv", True),
-            )
+    for v in videos:
+        stem = Path(v).stem
+        h5_exists = list(Path(dest_folder).glob(f"{stem}*.h5"))
+        if h5_exists:
+            logger.info("  %s already processed – skipping.", Path(v).name)
+            fps_manifest[stem] = target_fps if target_fps else get_video_fps(v)
+            continue
+
+        # Downsample if needed
+        video_to_run = v
+        tmp_file = None
+        if target_fps is not None:
+            actual_fps = get_video_fps(v)
+            if actual_fps > target_fps * 1.05:
+                tmp_file = os.path.join(tmp_dir, Path(v).name)
+                if not os.path.exists(tmp_file):
+                    logger.info(
+                        "  Resampling %s: %.1f → %.1f fps ...", Path(v).name, actual_fps, target_fps
+                    )
+                    try:
+                        downsample_video(v, tmp_file, target_fps)
+                    except Exception as exc:
+                        logger.error("Downsampling failed (%s) – using original.", exc)
+                        tmp_file = None
+                video_to_run = tmp_file if tmp_file else v
+            fps_manifest[stem] = target_fps if tmp_file else actual_fps
         else:
-            logger.warning(
-                "DLC version %d.%d detected – falling back to TensorFlow / DLC 2.x path.",
-                major,
-                minor,
-            )
-            run_superanimal_inference_tf(
-                videos=videos_to_run,
-                superanimal_name=dlc_cfg["superanimal_name"],
-                dest_folder=dest_folder,
-                save_as_csv=dlc_cfg.get("save_as_csv", True),
-            )
-    finally:
-        if tmp_dir is not None:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            fps_manifest[stem] = get_video_fps(v)
+
+        # Run DLC on this single video
+        try:
+            if major >= 3:
+                run_superanimal_inference_pytorch(
+                    videos=[video_to_run],
+                    superanimal_name=dlc_cfg["superanimal_name"],
+                    model_name=dlc_cfg["model_name"],
+                    detector_name=dlc_cfg["detector_name"],
+                    scale_list=dlc_cfg.get("scale_list", [200, 300, 400]),
+                    dest_folder=dest_folder,
+                    video_adapt=dlc_cfg.get("video_adapt", False),
+                    adapt_iterations=dlc_cfg.get("adapt_iterations", 100),
+                    batch_size=dlc_cfg.get("batch_size", 8),
+                    detector_batch_size=dlc_cfg.get("detector_batch_size", 8),
+                    save_as_csv=dlc_cfg.get("save_as_csv", True),
+                )
+            else:
+                logger.warning(
+                    "DLC version %d.%d detected – falling back to TensorFlow / DLC 2.x path.",
+                    major, minor,
+                )
+                run_superanimal_inference_tf(
+                    videos=[video_to_run],
+                    superanimal_name=dlc_cfg["superanimal_name"],
+                    dest_folder=dest_folder,
+                    save_as_csv=dlc_cfg.get("save_as_csv", True),
+                )
+        finally:
+            # Delete the downsampled copy immediately to free disk space
+            if tmp_file and os.path.exists(tmp_file):
+                os.remove(tmp_file)
+
+    if tmp_dir and os.path.exists(tmp_dir):
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # ── Write fps manifest ────────────────────────────────────────────────────
     manifest_path = os.path.join(dest_folder, "fps_manifest.json")

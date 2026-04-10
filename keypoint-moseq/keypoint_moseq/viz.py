@@ -616,7 +616,8 @@ def plot_progress(
         for i in saved_iterations:
             with h5py.File(checkpoint_path, "r") as f:
                 z = np.array(f[f"model_snapshots/{i}/states/z"])
-                sample_state_history.append(z[batch_ix, start : start + window_size])
+                safe_ix = batch_ix % z.shape[0]
+                sample_state_history.append(z[safe_ix, start : start + window_size])
                 median_durations.append(np.median(get_durations(z, mask)))
 
         axs[2].scatter(saved_iterations, median_durations)

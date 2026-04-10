@@ -51,10 +51,10 @@ def _setup_logging(verbose: bool = False) -> None:
 # ─── Stage dispatch ───────────────────────────────────────────────────────────
 
 _STAGE_MAP = {
-    1: ("stages.s1_pose_extraction", "Stage 1: DLC SuperAnimal pose extraction"),
-    2: ("stages.s2_preprocessing",   "Stage 2: Keypoint preprocessing"),
-    3: ("stages.s3_moseq_fitting",   "Stage 3: keypoint-MoSeq model fitting"),
-    4: ("stages.s4_analysis",        "Stage 4: Syllable analysis"),
+    1: ("stages.s1_pose_extraction",  "Stage 1: DLC SuperAnimal pose extraction"),
+    2: ("stages.s2_preprocessing",    "Stage 2: Keypoint preprocessing"),
+    3: ("stages.s3_moseq_fitting",    "Stage 3: keypoint-MoSeq model fitting"),
+    4: ("stages.s4_classification",   "Stage 4: Syllable-based classification"),
 }
 
 

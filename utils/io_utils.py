@@ -33,10 +33,12 @@ def collect_videos(context_cfg: dict, base_dir: str) -> List[str]:
     """Return sorted list of video file paths for a context config entry."""
     folder = resolve_path(base_dir, context_cfg["folder"])
     exts = context_cfg.get("video_extensions", [".mp4", ".avi", ".mpg"])
+    recursive = context_cfg.get("recursive", False)
     videos = []
+    pattern_prefix = "**/" if recursive else ""
     for ext in exts:
-        videos.extend(glob.glob(os.path.join(folder, f"*{ext}")))
-        videos.extend(glob.glob(os.path.join(folder, f"*{ext.upper()}")))
+        videos.extend(glob.glob(os.path.join(folder, f"{pattern_prefix}*{ext}"), recursive=recursive))
+        videos.extend(glob.glob(os.path.join(folder, f"{pattern_prefix}*{ext.upper()}"), recursive=recursive))
     return sorted(set(videos))
 
 

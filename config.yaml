@@ -9,33 +9,48 @@ paths:
   dlc_output_dir: "outputs/01_dlc_raw"       # DLC H5 / CSV files land here
   preprocessed_dir: "outputs/02_preprocessed" # cleaned keypoint arrays (NPZ)
   moseq_project_dir: "outputs/03_moseq"      # keypoint-moseq project root
-  analysis_dir: "outputs/04_analysis"        # CSVs, figures, JSON summaries
 
 # ─── Video contexts ──────────────────────────────────────────────────────────
 # Add one entry per experimental context.  `folder` is relative to the repo root.
 contexts:
-  - name: open_field
-    folder: "Data/David_Pain"
-    video_extensions: [".mpg", ".mp4", ".avi"]
-  - name: epm
-    folder: "Data/EPM videos"
-    video_extensions: [".mp4", ".MP4", ".avi"]
+  # - name: open_field
+  #   folder: "Data/David_Pain"
+  #   video_extensions: [".mpg", ".mp4", ".avi"]
+  # - name: epm
+  #   folder: "Data/EPM videos"
+  #   video_extensions: [".mp4", ".MP4", ".avi"]
+  - name: fiber_photometry
+    folder: "Data/Fiber photometry"
+    video_extensions: [".avi"]
+    recursive: true
+  - name: surgery_15mice
+    folder: "Data/sugery_15 mice_Gen"
+    video_extensions: [".mp4", ".MP4"]
+    recursive: true
+
+  - name: takaya_surgery
+    folder: "Data/sugery_behavior test (Takaya Ishii)_Gen"
+    video_extensions: [".mp4", ".MP4"]
+    recursive: true
+    # Per-video metadata (mouse_id, group, timepoint, test_type) is in:
+    metadata_csv: "Data/sugery_behavior test (Takaya Ishii)_Gen/video_metadata.csv"
 
 # ─── DeepLabCut SuperAnimal ──────────────────────────────────────────────────
 dlc:
   superanimal_name: "superanimal_topviewmouse"   # model zoo name
   # PyTorch (DLC >= 3.0) model; set to "dlcrnet" to fall back to TensorFlow
-  model_name: "hrnetw32"
+  model_name: "hrnet_w32"
   detector_name: "fasterrcnn_mobilenet_v3_large_fpn"
   # Scale list used by SuperAnimal video adaptation (pixels); covers typical arena sizes
-  scale_list: [200, 300, 400]
+  scale_list: [200, 300]
   # Video adaptation refines the model on unlabelled frames.
   # Disable for a quick first pass; enable for publication-quality results.
   video_adapt: false
   adapt_iterations: 100
-  batch_size: 8
+  batch_size: 32
+  detector_batch_size: 32    # batch size for the detector (FasterRCNN); default DLC is 1
   save_as_csv: true          # also write a human-readable CSV alongside the H5
-  target_fps: null           # downsample to this fps before DLC (null = all frames; 10–15 recommended)
+  target_fps: 10             # downsample to this fps before DLC (null = all frames; 10–15 recommended)
 
 # ─── Keypoints ────────────────────────────────────────────────────────────────
 keypoints:
@@ -77,12 +92,6 @@ keypoints:
     - mid_back
     - mouse_center
     - tail_base
-    - left_shoulder
-    - left_midside
-    - left_hip
-    - right_shoulder
-    - right_midside
-    - right_hip
   # For egocentric alignment reference (MoSeq handles alignment internally)
   anchor_part: "mouse_center"
   heading_parts: ["nose", "tail_base"]
@@ -99,16 +108,33 @@ preprocessing:
   # If true, z-score each keypoint dimension within a session (applied after norm)
   session_standardize: false
 
+# ─── Joint surgery model ──────────────────────────────────────────────────────
+# Fit a single model across both surgery datasets (takaya + surgery_15mice),
+# excluding BFT sessions so the syllable space covers OFT + Y-maze only.
+joint_surgery_model:
+  model_name: "model_surgery_joint"
+  contexts: ["surgery_15mice", "takaya_surgery"]
+  exclude_test_types: ["BFT"]
+
+# ─── All-data joint model ─────────────────────────────────────────────────────
+# Single shared syllable space across surgery + fiber, no BFT.
+# 270 sessions: 238 surgery (OFT + Y-maze) + 32 fiber.
+joint_all_model:
+  model_name: "model_all"
+  contexts: ["surgery_15mice", "takaya_surgery", "fiber_photometry"]
+  exclude_test_types: ["BFT"]
+
 # ─── keypoint-MoSeq ──────────────────────────────────────────────────────────
 moseq:
   model_name: "model_v01"
-  pca_components: 10           # number of PCs to retain (check scree plot first)
+  model_per_context: true      # fit one model per context (surgery / fiber photometry)
+  pca_components: 8            # (7 kpts × 2 coords = 14 dims max; nlags=3 → D²=576 ~20GB)
   # AR-only warm-up: fast, no full SLDS; refine the state sequence
   num_ar_iters: 50
   # Full SLDS fitting iterations
-  num_full_iters: 200
+  num_full_iters: 400
   # HDP prior: max syllable states (pruning reduces the effective number)
-  num_states: 100
+  num_states: 50
   kappa: 1.0e6                 # HDP stickiness (higher → longer dwell times)
   nlags: 3                     # AR model lags
   save_every: 25               # checkpoint interval
@@ -121,3 +147,105 @@ analysis:
   entropy_window: 50
   # Number of top syllables shown in transition matrix heatmaps
   top_n_syllables: 20
+
+# ─── Within-study comparisons ─────────────────────────────────────────────────
+# Each entry defines one statistical comparison.
+# filter       : dict of {metadata_column: value} – all must match (AND logic)
+# group_column : metadata column whose distinct values define the groups
+# 2 groups → Mann-Whitney U  |  3+ groups → Kruskal-Wallis
+# All p-values are FDR-corrected (Benjamini-Hochberg) across syllables.
+#
+# To add future datasets: extend build_session_metadata() with new columns
+# and add new entries here referencing those columns.
+comparisons:
+  - name: "surgery_BFT_pre_vs_post"
+    filter:
+      context: "surgery_15mice"
+      test_type: "BFT"
+    group_column: "timepoint"
+    paired: true        # POD-1 (pre) vs POD+1 (post), same mice
+
+  - name: "surgery_OFT_pre_vs_post"
+    filter:
+      context: "surgery_15mice"
+      test_type: "OFT"
+    group_column: "timepoint"
+    paired: true
+
+  - name: "surgery_Ymaze_pre_vs_post"
+    filter:
+      context: "surgery_15mice"
+      test_type: "Y maze"
+    group_column: "timepoint"
+    paired: true
+
+  - name: "fiber_AST_condition"
+    filter:
+      context: "fiber_photometry"
+      experiment: "AST"
+    group_column: "condition"
+
+  - name: "fiber_food_condition"
+    filter:
+      context: "fiber_photometry"
+      experiment: "Food intake during habituation"
+    group_column: "condition"
+
+  - name: "surgery_pre_test_type"
+    filter:
+      context: "surgery_15mice"
+      timepoint: "pre"
+    group_column: "test_type"
+
+  - name: "surgery_post_test_type"
+    filter:
+      context: "surgery_15mice"
+      timepoint: "post"
+    group_column: "test_type"
+
+  # Pooled pre/post: all test types together → n=32 pairs, properly powered
+  - name: "surgery_all_tests_pre_vs_post"
+    filter:
+      context: "surgery_15mice"
+    group_column: "timepoint"
+    paired: true
+
+  # ── Takaya dataset (29 mice, same animals pre→post surgery) ─────────────
+  - name: "takaya_pre_vs_post"
+    filter:
+      context: "takaya_surgery"
+    group_column: "timepoint"
+    paired: true
+
+  - name: "takaya_pre_vs_post_BFT"
+    filter:
+      context: "takaya_surgery"
+      test_type: "BFT"
+    group_column: "timepoint"
+    paired: true
+
+  - name: "takaya_pre_vs_post_OFT"
+    filter:
+      context: "takaya_surgery"
+      test_type: "OFT"
+    group_column: "timepoint"
+    paired: true
+
+  - name: "takaya_pre_vs_post_Ymaze"
+    filter:
+      context: "takaya_surgery"
+      test_type: "Y maze"
+    group_column: "timepoint"
+    paired: true
+
+  - name: "takaya_test_type_pre"
+    filter:
+      context: "takaya_surgery"
+      timepoint: "pre"
+    group_column: "test_type"
+
+  - name: "takaya_test_type_post"
+    filter:
+      context: "takaya_surgery"
+      timepoint: "post"
+    group_column: "test_type"

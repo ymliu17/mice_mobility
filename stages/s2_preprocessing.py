@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import logging
 import argparse
@@ -102,6 +103,102 @@ def load_dlc_h5(filepath: str, animal: str = "animal0") -> Tuple[np.ndarray, np.
         confs[:, ki] = sub[bp, "likelihood"].values if "likelihood" in sub[bp] else 1.0
 
     return coords, confs, bodyparts
+
+
+def load_dlc_h5_all_animals(
+    filepath: str,
+) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List[str]]:
+    """
+    Load all animals from a DLC 3.x H5 file.
+
+    Returns
+    -------
+    coords_by_animal : {animal_name: (T, K, 2)}
+    confs_by_animal  : {animal_name: (T, K)}
+    bodyparts        : list of K keypoint names
+    """
+    df = pd.read_hdf(filepath)
+
+    if not isinstance(df.columns, pd.MultiIndex):
+        raise ValueError(f"Unexpected column structure in {filepath}")
+
+    nlevels = df.columns.nlevels
+    scorer = df.columns.get_level_values(0)[0]
+
+    if nlevels != 4:
+        # Single-animal file — wrap as animal0
+        coords, confs, bodyparts = load_dlc_h5(filepath)
+        return {"animal0": coords}, {"animal0": confs}, bodyparts
+
+    available_animals = df[scorer].columns.get_level_values(0).unique().tolist()
+    bodyparts = df[scorer, available_animals[0]].columns.get_level_values(0).unique().tolist()
+    T, K = len(df), len(bodyparts)
+
+    coords_by_animal: Dict[str, np.ndarray] = {}
+    confs_by_animal:  Dict[str, np.ndarray] = {}
+
+    for animal in available_animals:
+        sub = df[scorer, animal]
+        coords = np.full((T, K, 2), np.nan, dtype=np.float32)
+        confs  = np.full((T, K),    np.nan, dtype=np.float32)
+        for ki, bp in enumerate(bodyparts):
+            coords[:, ki, 0] = sub[bp, "x"].values
+            coords[:, ki, 1] = sub[bp, "y"].values
+            confs[:, ki] = sub[bp, "likelihood"].values if "likelihood" in sub[bp] else 1.0
+        coords_by_animal[animal] = coords
+        confs_by_animal[animal]  = confs
+
+    return coords_by_animal, confs_by_animal, bodyparts
+
+
+def _parse_surgery_mouse_pair(session_name: str) -> Optional[Tuple[int, int]]:
+    """
+    Extract the (odd_id, even_id) mouse pair from a surgery_15mice session name.
+
+    Filenames encode the pair as '<date>-X -Y', e.g. '240204-1 -2', where X is
+    the right (odd-numbered) mouse and Y is the left (even-numbered) mouse.
+
+    Returns (odd_id, even_id) or None if no pair found (e.g. Y-maze single-animal).
+    """
+    # Match the " -X -Y" pattern (space-dash first, space-dash second)
+    m = re.search(r'-(\d+)\s+-(\d+)', session_name)
+    if m is None:
+        return None
+    a, b = int(m.group(1)), int(m.group(2))
+    # Determine which is odd (right) and which is even (left)
+    if a % 2 == 1 and b % 2 == 0:
+        return a, b   # (odd, even)
+    if a % 2 == 0 and b % 2 == 1:
+        return b, a   # reorder to (odd, even)
+    logger.warning("Unexpected mouse pair '%s-%s' in '%s'; both odd or both even.", a, b, session_name)
+    return a, b
+
+
+def _parse_surgery_single_mouse_id(session_name: str) -> Optional[int]:
+    """
+    Extract the single mouse ID from a surgery_15mice Y-maze session name.
+
+    Filenames like 'POD+1 Y maze 240204-3_superanimal...' encode a single mouse
+    as '<date>-<id>', e.g. '240204-3' → mouse ID 3.
+
+    Returns the integer mouse ID, or None if not found.
+    """
+    # Match date-singleID but NOT date-id space -id (pair format)
+    m = re.search(r'\d{6}-(\d+)(?!\s*-\d)', session_name)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _mean_x_of_animal(coords: np.ndarray, bodyparts: List[str], ref_part: str = "mouse_center") -> float:
+    """Return the mean x-coordinate of ref_part over valid frames."""
+    if ref_part in bodyparts:
+        idx = bodyparts.index(ref_part)
+    else:
+        idx = len(bodyparts) // 2  # fallback: middle keypoint
+    x = coords[:, idx, 0]
+    valid = x[~np.isnan(x)]
+    return float(np.mean(valid)) if len(valid) > 0 else 0.0
 
 
 def load_dlc_csv(filepath: str) -> Tuple[np.ndarray, np.ndarray, List[str]]:
@@ -426,11 +523,18 @@ def run(config_path: str = "config.yaml") -> None:
         session = session_name_from_dlc_file(fpath)
         logger.info("Processing session '%s' ...", session)
 
+        # Detect surgery_15mice two-animal videos by context folder name
+        is_surgery_15 = Path(fpath).parent.name == "surgery_15mice"
+
         try:
-            if fpath.endswith(".h5"):
-                coords, confs, bodyparts = load_dlc_h5(fpath)
+            if fpath.endswith(".h5") and is_surgery_15:
+                coords_all, confs_all, bodyparts = load_dlc_h5_all_animals(fpath)
+            elif fpath.endswith(".h5"):
+                _c, _cf, bodyparts = load_dlc_h5(fpath)
+                coords_all, confs_all = {"animal0": _c}, {"animal0": _cf}
             else:
-                coords, confs, bodyparts = load_dlc_csv(fpath)
+                _c, _cf, bodyparts = load_dlc_csv(fpath)
+                coords_all, confs_all = {"animal0": _c}, {"animal0": _cf}
         except Exception as exc:
             logger.error("  Failed to load %s: %s", fpath, exc)
             continue
@@ -438,23 +542,68 @@ def run(config_path: str = "config.yaml") -> None:
         if not all_bodyparts:
             all_bodyparts = bodyparts
 
-        raw_confidences[session] = confs.copy()
+        # Only split two-animal videos when filename encodes a pair (e.g. "240204-1 -2").
+        # Y-maze videos have a single mouse (e.g. "240204-1") — no pair → no split.
+        pair = _parse_surgery_mouse_pair(session) if is_surgery_15 else None
 
-        coords_out, confs_out, mean_bl = preprocess_session(
-            coords, confs, bodyparts, prep_cfg, kp_cfg
-        )
+        if is_surgery_15 and len(coords_all) >= 2 and pair is not None:
+            # Assign animal0/animal1 to specific mouse IDs by x-position
+            odd_id, even_id = pair
+            animals = list(coords_all.keys())[:2]
+            mean_x = {a: _mean_x_of_animal(coords_all[a], bodyparts) for a in animals}
+            left_animal  = min(animals, key=lambda a: mean_x[a])   # lower x = left = even
+            right_animal = max(animals, key=lambda a: mean_x[a])   # higher x = right = odd
+            assignments = {left_animal: even_id, right_animal: odd_id}
 
-        metadata = {
-            "source_file": fpath,
-            "mean_body_length_px": mean_bl,
-            "n_frames": int(coords_out.shape[0]),
-            "effective_fps": _effective_fps(fpath, session),
-        }
-        save_preprocessed(out_dir, session, coords_out, confs_out, bodyparts, metadata)
-        logger.info(
-            "  → %d frames saved (body length: %.1f px, fps: %.1f)",
-            coords_out.shape[0], mean_bl, metadata["effective_fps"],
-        )
+            for animal, mouse_id in assignments.items():
+                sub_session = f"{session}_mouse{mouse_id}"
+                coords = coords_all[animal]
+                confs  = confs_all[animal]
+
+                raw_confidences[sub_session] = confs.copy()
+                coords_out, confs_out, mean_bl = preprocess_session(
+                    coords, confs, bodyparts, prep_cfg, kp_cfg
+                )
+                metadata = {
+                    "source_file": fpath,
+                    "animal_id": animal,
+                    "mouse_id": mouse_id,
+                    "mean_body_length_px": mean_bl,
+                    "n_frames": int(coords_out.shape[0]),
+                    "effective_fps": _effective_fps(fpath, session),
+                }
+                save_preprocessed(out_dir, sub_session, coords_out, confs_out, bodyparts, metadata)
+                logger.info(
+                    "  → mouse%s (%s, mean_x=%.1f): %d frames (body length: %.1f px)",
+                    mouse_id, animal, mean_x[animal], coords_out.shape[0], mean_bl,
+                )
+        else:
+            # Single-animal session (all other contexts, and surgery_15mice Y-maze)
+            coords = list(coords_all.values())[0]
+            confs  = list(confs_all.values())[0]
+
+            # For surgery_15mice single-animal videos (Y-maze), append mouse ID from filename
+            if is_surgery_15:
+                mouse_id = _parse_surgery_single_mouse_id(session)
+                save_session = f"{session}_mouse{mouse_id}" if mouse_id is not None else session
+            else:
+                save_session = session
+
+            raw_confidences[save_session] = confs.copy()
+            coords_out, confs_out, mean_bl = preprocess_session(
+                coords, confs, bodyparts, prep_cfg, kp_cfg
+            )
+            metadata = {
+                "source_file": fpath,
+                "mean_body_length_px": mean_bl,
+                "n_frames": int(coords_out.shape[0]),
+                "effective_fps": _effective_fps(fpath, session),
+            }
+            save_preprocessed(out_dir, save_session, coords_out, confs_out, bodyparts, metadata)
+            logger.info(
+                "  → %d frames saved (body length: %.1f px, fps: %.1f)",
+                coords_out.shape[0], mean_bl, metadata["effective_fps"],
+            )
 
     # ── QC reports ────────────────────────────────────────────────────────────
     if all_bodyparts and raw_confidences:

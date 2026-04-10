@@ -6,16 +6,14 @@ dependencies:
   - python=3.10
   - pip
   - ffmpeg                    # video decoding
-  - cudatoolkit=11.8          # remove if CPU-only
-  - cudnn=8.6                 # remove if CPU-only
   - pip:
     # ── Pose estimation ─────────────────────────────────────────────────────
-    - "deeplabcut[pytorch]>=3.0.0"   # use [tf] for TensorFlow / DLC 2.x
+    - "deeplabcut[pytorch]==3.0.0rc14"    # use [tf] for TensorFlow / DLC 2.x
     - dlclibrary>=0.5.0
 
     # ── Behavioral segmentation ─────────────────────────────────────────────
     - keypoint-moseq>=0.4.0
-    - jax[cuda11_pip]>=0.4.1         # swap [cpu] for CPU-only machines
+    - jax[cuda12_pip]>=0.4.1         # swap [cpu] for CPU-only machines
     - jaxlib>=0.4.1
 
     # ── Scientific stack ────────────────────────────────────────────────────

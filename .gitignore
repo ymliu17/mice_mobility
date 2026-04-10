@@ -43,6 +43,12 @@ __pycache__/
 # ── Temp dirs created by the pipeline ─────────────────────────────────────────
 _tmp_ds/
 
+# ── Runtime logs ──────────────────────────────────────────────────────────────
+logs/
+
+# ── IDE workspace files ───────────────────────────────────────────────────────
+*.code-workspace
+
 # ── Claude Code project memory ────────────────────────────────────────────────
 .claude/
 
