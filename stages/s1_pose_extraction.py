@@ -361,12 +361,15 @@ def process_context(
 
 # ─── Main entry point ─────────────────────────────────────────────────────────
 
-def run(config_path: str = "config.yaml") -> None:
+def run(config_path: str = "config.yaml", filter_contexts: Optional[List[str]] = None) -> None:
     cfg = load_config(config_path)
     base_dir = str(Path(config_path).parent.resolve())
 
     dlc_output_dir = resolve_path(base_dir, cfg["paths"]["dlc_output_dir"])
     all_videos = collect_all_videos(cfg, base_dir)
+    if filter_contexts:
+        all_videos = {k: v for k, v in all_videos.items() if k in filter_contexts}
+        logger.info("Context filter applied – processing: %s", list(all_videos.keys()))
     dlc_cfg = cfg["dlc"]
     target_fps: Optional[float] = dlc_cfg.get("target_fps") or None
     if target_fps is not None:
@@ -393,5 +396,9 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
     parser = argparse.ArgumentParser(description="Stage 1: DLC SuperAnimal inference")
     parser.add_argument("--config", default="config.yaml")
+    parser.add_argument(
+        "--contexts", nargs="+", metavar="CTX",
+        help="Only process these context names (default: all).",
+    )
     args = parser.parse_args()
-    run(args.config)
+    run(args.config, filter_contexts=args.contexts)

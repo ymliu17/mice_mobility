@@ -54,11 +54,11 @@ _STAGE_MAP = {
     1: ("stages.s1_pose_extraction",  "Stage 1: DLC SuperAnimal pose extraction"),
     2: ("stages.s2_preprocessing",    "Stage 2: Keypoint preprocessing"),
     3: ("stages.s3_moseq_fitting",    "Stage 3: keypoint-MoSeq model fitting"),
-    4: ("stages.s4_classification",   "Stage 4: Syllable-based classification"),
+    4: ("stages.s4_classification",   "Stage 4: state-moseq fit + syllable-based classification"),
 }
 
 
-def run_stages(stages: List[int], config_path: str) -> None:
+def run_stages(stages: List[int], config_path: str, filter_contexts: List[str] | None = None) -> None:
     import importlib
 
     for stage_id in sorted(stages):
@@ -72,7 +72,10 @@ def run_stages(stages: List[int], config_path: str) -> None:
         logger.info("=" * 60)
 
         module = importlib.import_module(module_path)
-        module.run(config_path=config_path)
+        if stage_id in (1, 2) and filter_contexts:
+            module.run(config_path=config_path, filter_contexts=filter_contexts)
+        else:
+            module.run(config_path=config_path)
 
     logging.getLogger("pipeline").info("All requested stages complete.")
 
@@ -201,6 +204,10 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Stage numbers to run (1–4). Default: all stages.",
     )
+    run_p.add_argument(
+        "--contexts", nargs="+", metavar="CTX",
+        help="Limit stages 1 & 2 to these context names (default: all).",
+    )
 
     # ── qc ──
     subparsers.add_parser("qc", help="Generate QC report from Stage 2 output.")
@@ -219,7 +226,7 @@ def main() -> None:
     config_path = os.path.abspath(args.config)
 
     if args.command == "run":
-        run_stages(args.stages, config_path)
+        run_stages(args.stages, config_path, filter_contexts=getattr(args, "contexts", None))
     elif args.command == "qc":
         run_qc(config_path)
     elif args.command == "check":

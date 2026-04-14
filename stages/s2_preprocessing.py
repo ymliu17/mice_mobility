@@ -472,18 +472,18 @@ def preprocess_session(
 
 # ─── Main entry point ─────────────────────────────────────────────────────────
 
-def run(config_path: str = "config.yaml") -> None:
+def run(config_path: str = "config.yaml", filter_contexts: Optional[List[str]] = None) -> None:
     cfg = load_config(config_path)
     base_dir = str(Path(config_path).parent.resolve())
 
     dlc_dir = resolve_path(base_dir, cfg["paths"]["dlc_output_dir"])
     out_dir = resolve_path(base_dir, cfg["paths"]["preprocessed_dir"])
-    analysis_dir = resolve_path(base_dir, cfg["paths"]["analysis_dir"])
+    qc_dir = os.path.join(out_dir, "qc")
     prep_cfg = cfg["preprocessing"]
     kp_cfg = cfg["keypoints"]
 
     os.makedirs(out_dir, exist_ok=True)
-    os.makedirs(analysis_dir, exist_ok=True)
+    os.makedirs(qc_dir, exist_ok=True)
 
     # Discover all DLC H5 result files
     dlc_files = find_dlc_result_files(dlc_dir, extensions=(".h5",))
@@ -498,6 +498,10 @@ def run(config_path: str = "config.yaml") -> None:
             "No DLC result files found under %s. Run Stage 1 first.", dlc_dir
         )
         return
+
+    if filter_contexts:
+        dlc_files = [f for f in dlc_files if Path(f).parent.name in filter_contexts]
+        logger.info("Context filter applied – processing: %s", filter_contexts)
 
     logger.info("Found %d DLC result files.", len(dlc_files))
 
@@ -610,10 +614,10 @@ def run(config_path: str = "config.yaml") -> None:
         conf_df = confidence_report(
             raw_confidences, all_bodyparts, threshold=prep_cfg["conf_threshold"]
         )
-        conf_df.to_csv(os.path.join(analysis_dir, "qc_confidence.csv"), index=False)
+        conf_df.to_csv(os.path.join(qc_dir, "qc_confidence.csv"), index=False)
         plot_confidence_heatmap(
             conf_df,
-            os.path.join(analysis_dir, "qc_confidence_heatmap.png"),
+            os.path.join(qc_dir, "qc_confidence_heatmap.png"),
             threshold=prep_cfg["conf_threshold"],
         )
 
@@ -635,5 +639,9 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
     parser = argparse.ArgumentParser(description="Stage 2: Keypoint preprocessing")
     parser.add_argument("--config", default="config.yaml")
+    parser.add_argument(
+        "--contexts", nargs="+", metavar="CTX",
+        help="Only process these context names (default: all).",
+    )
     args = parser.parse_args()
-    run(args.config)
+    run(args.config, filter_contexts=args.contexts)

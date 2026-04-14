@@ -35,6 +35,14 @@ contexts:
     # Per-video metadata (mouse_id, group, timepoint, test_type) is in:
     metadata_csv: "Data/sugery_behavior test (Takaya Ishii)_Gen/video_metadata.csv"
 
+  - name: gi_mice_oft
+    folder: "Data/Gi mice OFT"
+    video_extensions: [".mp4", ".MP4"]
+    recursive: true
+    # Gi-DREADD mice: head-mount surgery OFT (pre / post1 / post3).
+    # Group (CNO/DPBS × LPS/Saline) is the March treatment phase — not applied during OFT.
+    metadata_csv: "Data/Gi mice OFT/video_metadata.csv"
+
 # ─── DeepLabCut SuperAnimal ──────────────────────────────────────────────────
 dlc:
   superanimal_name: "superanimal_topviewmouse"   # model zoo name
@@ -117,11 +125,11 @@ joint_surgery_model:
   exclude_test_types: ["BFT"]
 
 # ─── All-data joint model ─────────────────────────────────────────────────────
-# Single shared syllable space across surgery + fiber, no BFT.
-# 270 sessions: 238 surgery (OFT + Y-maze) + 32 fiber.
+# Single shared syllable space across all cohorts, no BFT.
+# Includes Gi-DREADD mice (33 OFT sessions: pre/post1/post3).
 joint_all_model:
   model_name: "model_all"
-  contexts: ["surgery_15mice", "takaya_surgery", "fiber_photometry"]
+  contexts: ["surgery_15mice", "takaya_surgery", "fiber_photometry", "gi_mice_oft"]
   exclude_test_types: ["BFT"]
 
 # ─── keypoint-MoSeq ──────────────────────────────────────────────────────────
@@ -132,10 +140,10 @@ moseq:
   # AR-only warm-up: fast, no full SLDS; refine the state sequence
   num_ar_iters: 50
   # Full SLDS fitting iterations
-  num_full_iters: 400
+  num_full_iters: 600
   # HDP prior: max syllable states (pruning reduces the effective number)
   num_states: 50
-  kappa: 1.0e6                 # HDP stickiness (higher → longer dwell times)
+  kappa: 1.0e5                 # HDP stickiness (higher → longer dwell times)
   nlags: 3                     # AR model lags
   save_every: 25               # checkpoint interval
 
@@ -249,3 +257,44 @@ comparisons:
       context: "takaya_surgery"
       timepoint: "post"
     group_column: "test_type"
+
+  # ── Gi-DREADD mice (OFT, pre / post1 / post3 surgery timepoints) ─────────
+  - name: "gi_pre_vs_post1"
+    filter:
+      context: "gi_mice_oft"
+      timepoint: ["pre", "post1"]
+    group_column: "timepoint"
+    paired: true
+
+  - name: "gi_pre_vs_post3"
+    filter:
+      context: "gi_mice_oft"
+      timepoint: ["pre", "post3"]
+    group_column: "timepoint"
+    paired: true
+
+  - name: "gi_post1_vs_post3"
+    filter:
+      context: "gi_mice_oft"
+      timepoint: ["post1", "post3"]
+    group_column: "timepoint"
+    paired: true
+
+  # Group comparisons at each timepoint (CNO vs DPBS, controlling for LPS)
+  - name: "gi_dreadd_effect_pre"
+    filter:
+      context: "gi_mice_oft"
+      timepoint: "pre"
+    group_column: "dreadd"
+
+  - name: "gi_dreadd_effect_post1"
+    filter:
+      context: "gi_mice_oft"
+      timepoint: "post1"
+    group_column: "dreadd"
+
+  - name: "gi_dreadd_effect_post3"
+    filter:
+      context: "gi_mice_oft"
+      timepoint: "post3"
+    group_column: "dreadd"
