@@ -144,7 +144,7 @@ def _fit_one_model(
             },
             trans_hypparams={
                 "num_states": moseq_cfg.get("num_states", 100),
-                "gamma": moseq_cfg.get("kappa", 1e6),
+                "gamma": moseq_cfg.get("gamma", 1e3),
                 "alpha": 5.7,
                 "kappa": moseq_cfg.get("kappa", 1e6),
             },

@@ -144,6 +144,7 @@ moseq:
   # HDP prior: max syllable states (pruning reduces the effective number)
   num_states: 50
   kappa: 1.0e5                 # HDP stickiness (higher → longer dwell times)
+  gamma: 1.0e3                 # HDP top-level concentration (distinct from kappa)
   nlags: 3                     # AR model lags
   save_every: 25               # checkpoint interval
 
