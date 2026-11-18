@@ -55,6 +55,8 @@ _STAGE_MAP = {
     2: ("stages.s2_preprocessing",    "Stage 2: Keypoint preprocessing"),
     3: ("stages.s3_moseq_fitting",    "Stage 3: keypoint-MoSeq model fitting"),
     4: ("stages.s4_classification",   "Stage 4: state-moseq fit + syllable-based classification"),
+    5: ("stages.s5_posthoc_analysis", "Stage 5: post-hoc behavioural atlas and robustness"),
+    6: ("stages.s6_fiber_joint",      "Stage 6: fiber photometry x kinematics joint analysis"),
 }
 
 
@@ -63,7 +65,7 @@ def run_stages(stages: List[int], config_path: str, filter_contexts: List[str] |
 
     for stage_id in sorted(stages):
         if stage_id not in _STAGE_MAP:
-            raise ValueError(f"Unknown stage id: {stage_id}. Must be 1–4.")
+            raise ValueError(f"Unknown stage id: {stage_id}. Must be 1–6.")
 
         module_path, description = _STAGE_MAP[stage_id]
         logger = logging.getLogger("pipeline")
@@ -202,7 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--stages", nargs="*", type=int, default=[1, 2, 3, 4],
         metavar="N",
-        help="Stage numbers to run (1–4). Default: all stages.",
+        help="Stage numbers to run (1–6). Default: stages 1–4.",
     )
     run_p.add_argument(
         "--contexts", nargs="+", metavar="CTX",

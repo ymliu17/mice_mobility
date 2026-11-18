@@ -29,11 +29,11 @@ contexts:
     recursive: true
 
   - name: takaya_surgery
-    folder: "Data/sugery_behavior test (Takaya Ishii)_Gen"
+    folder: "Data/sugery_Takaya_Gen"
     video_extensions: [".mp4", ".MP4"]
     recursive: true
     # Per-video metadata (mouse_id, group, timepoint, test_type) is in:
-    metadata_csv: "Data/sugery_behavior test (Takaya Ishii)_Gen/video_metadata.csv"
+    metadata_csv: "Data/sugery_Takaya_Gen/video_metadata.csv"
 
   - name: gi_mice_oft
     folder: "Data/Gi mice OFT"
@@ -299,3 +299,40 @@ comparisons:
       context: "gi_mice_oft"
       timepoint: "post3"
     group_column: "dreadd"
+
+# ─── Stage 6: fiber photometry × kinematics ──────────────────────────────────
+# Pairs each TDT block with the matching prediction from the custom 5-keypoint
+# AST DeepLabCut project, then derives peri-event dopamine and AST trial measures.
+fiber_joint:
+  data_dir: "Data/Fiber photometry"
+  dlc_project: "Data/Fiber photometry/AST20260806-Justin Zielinski-2026-08-06"
+  output_dir: "outputs/06_fiber_joint"
+
+  # Custom DLC model body parts (distinct from the SuperAnimal set used in Stage 1)
+  keypoints: ["left_ear", "right_ear", "neck", "body_center", "tail_base"]
+  conf_threshold: 0.6
+  max_interp_gap: 10
+  smooth_window: 9             # ≈0.45 s at 20 fps (must be odd)
+  smooth_polyorder: 2
+  fps: 20.0
+  cm_per_body_length: 6.28     # neck→tail-base length measured on the rig
+
+  # Bleaching-robust dF/F: each channel is detrended against its OWN rolling
+  # percentile baseline before the isosbestic regression, so the regression
+  # removes shared motion artefact rather than shared bleaching.
+  lowpass_hz: 10.0
+  baseline_window_s: 120.0
+  baseline_pct: 10
+  settle_s: 30.0               # discarded after LED turn-on
+
+  # Peri-event averaging
+  peri_pre_s: 2.0
+  peri_post_s: 4.0
+  peri_baseline: [-2.0, -1.0]
+  min_events: 5                # skip an event type below this count in a session
+
+  # Trial-level dopamine windows (s, relative to each event);
+  # all are baselined to peri_baseline before the GateOpen cue.
+  gate_window: [0.0, 0.5]
+  approach_window: [0.0, 0.5]
+  eat_window: [0.0, 2.0]
