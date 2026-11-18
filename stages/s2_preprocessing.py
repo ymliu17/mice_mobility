@@ -508,6 +508,12 @@ def run(config_path: str = "config.yaml", filter_contexts: Optional[List[str]] =
     # ── Load fps manifests written by Stage 1 (keyed by DLC output directory) ─
     _fps_cache: Dict[str, dict] = {}
 
+    # Manifests are keyed by the bare video stem, but *session* still carries the
+    # pose-model suffix (session_name_from_dlc_file only strips a "DLC" suffix,
+    # which SuperAnimal filenames do not have). Match on the longest manifest key
+    # that prefixes the session name.
+    _fps_fallback = float(cfg.get("dlc", {}).get("target_fps") or 30.0)
+
     def _effective_fps(fpath: str, session: str) -> float:
         ctx_dir = str(Path(fpath).parent)
         if ctx_dir not in _fps_cache:
@@ -516,8 +522,26 @@ def run(config_path: str = "config.yaml", filter_contexts: Optional[List[str]] =
                 with open(mp) as mf:
                     _fps_cache[ctx_dir] = json.load(mf)
             else:
+                logger.warning(
+                    "No fps_manifest.json in %s - every session there falls back "
+                    "to %.1f fps.", ctx_dir, _fps_fallback,
+                )
                 _fps_cache[ctx_dir] = {}
-        return float(_fps_cache[ctx_dir].get(session, 30.0))
+
+        manifest = _fps_cache[ctx_dir]
+        if session in manifest:
+            return float(manifest[session])
+
+        prefixes = [k for k in manifest if session.startswith(k)]
+        if prefixes:
+            return float(manifest[max(prefixes, key=len)])
+
+        logger.warning(
+            "Session '%s' absent from %s/fps_manifest.json (%d keys) - falling "
+            "back to %.1f fps. Per-second metrics will be wrong if that is not "
+            "the true rate.", session, ctx_dir, len(manifest), _fps_fallback,
+        )
+        return _fps_fallback
 
     # ── Load, preprocess, save ────────────────────────────────────────────────
     raw_confidences: Dict[str, np.ndarray] = {}
