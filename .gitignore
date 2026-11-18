@@ -59,3 +59,9 @@ logs/
 .venv/
 venv/
 env/
+# ── Local / editor artefacts ──────────────────────────────────────────────────
+logs/
+Rplots.pdf
+*.code-workspace
+.codex
+INTERN_AST_HANDOFF.md
